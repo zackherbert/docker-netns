@@ -16,13 +16,13 @@ Run `sudo make install`.
 
 You can add as many docker network as you want in different existing network namespaces.
 
-Let's suppose your netns is named ´vpn0´.
+Let's suppose your netns is named `vpn0`.
 
 The systemd service will create:
 
- - a new docker network named ´vpn0net´
- - using the ip link ´vpn0bridge´.
- - a pair of veth interfaces ´vpn0-int´ and ´vpn0-ext´, inside and outside the netns.
+ - a new docker network named `vpn0net`
+ - using the ip link `vpn0bridge`.
+ - a pair of veth interfaces `vpn0-int` and `vpn0-ext`, inside and outside the netns.
 
 Start the new service:
 
@@ -36,6 +36,6 @@ Enable it at boot:
 
     sudo systemctl enable docker-netns@vpn0.service
 
-You can then test your new docker network with ´--net=vpn0net´:
+You can then test your new docker network with `--net=vpn0net`:
 
     docker run -it --rm --net=vpn0net --volume /etc/netns/vpn0/resolv.conf:/etc/resolv.conf:ro alpine sh
