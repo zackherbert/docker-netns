@@ -1,0 +1,12 @@
+[Unit]
+Description=Docker network on netns %I
+Requires=docker.service
+Wants=docker.service
+Requires=openvpn-netns-client@%i.service
+Wants=openvpn-netns-client@%i.service
+
+[Service]
+ExecStart=/usr/local/bin/docker-netns-service %i
+
+[Install]
+WantedBy=multi-user.target

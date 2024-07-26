@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# Check root
+if [ "$EUID" -ne 0 ]
+  then echo "Please run as root"
+  exit
+fi
+
+# Check netns parameter
+NETNS=$1
+if [ -z "$NETNS" ]; then
+    echo "$0 should be run with a netns parameter."
+    exit -1
+fi
+
+# Check if the provided netns exists
+for i in {1..60}; do
+    if ip netns list | grep -w "$NETNS" > /dev/null; then
+        break
+    fi
+    if [[ $i -eq 60 ]]; then
+        echo "The netns $NETNS does not seem to exist."
+        exit 1
+    fi
+    sleep 1
+done
+
+# Check if there is a tun link inside that netns
+ip netns exec $NETNS ip link | grep 'tun' > /dev/null
+if [[ $? -ne 0 ]]; then
+    echo "The netns $NETNS does not seem to have a tun link available."
+    exit 1
+fi
+
+# Extract the tun device used inside the netns
+TUN=`ip netns exec $NETNS ip link | grep 'tun' | awk -F ': ' '{print $2}'`
+
+echo "tun device found on the netns $NETNS: $TUN"
+
+# Check that docker is started
+systemctl is-active --quiet docker
+if [[ $? -ne 0 ]]; then
+    echo "The docker systemd service is not started."
+    exit 1
+fi
+
+# Create docker network if it does not exist already
+DOCKER_NETWORK=${NETNS}net
+DOCKER_BRIDGE=${NETNS}bridge
+echo "Creating docker network $DOCKER_NETWORK using bridge $DOCKER_BRIDGE"
+docker network create $DOCKER_NETWORK -d bridge \
+  -o com.docker.network.bridge.inhibit_ipv4=true \
+  -o com.docker.network.bridge.name=$DOCKER_BRIDGE 2>/dev/null
+
+# Find out the gateway and subnet of the docker network
+GATEWAY=`docker network inspect $DOCKER_NETWORK -f '{{ (index .IPAM.Config 0).Gateway}}'`
+SUBNET=`docker network inspect $DOCKER_NETWORK -f '{{ (index .IPAM.Config 0).Subnet}}'`
+echo "$DOCKER_NETWORK has gateway:$GATEWAY subnet:$SUBNET"
+
+# Create and configure veth pair
+VETH_INT=${NETNS}-int
+VETH_EXT=${NETNS}-ext
+ip link add $VETH_EXT type veth peer name $VETH_INT netns vpn0 2>/dev/null || true
+ip link set master $DOCKER_BRIDGE $VETH_EXT
+ip -n $NETNS addr add $GATEWAY/16 dev $VETH_INT 2>/dev/null || true
+
+# Start the veth interfaces
+ip -n $NETNS link set $VETH_INT up
+ip link set $VETH_EXT up
+
+# Enable ip forwarding and set up masquerading
+echo 1 > /proc/sys/net/ipv4/ip_forward
+ip netns exec $NETNS sysctl -w net.ipv4.ip_forward=1 >/dev/null
+IPTABLE_RULE="POSTROUTING -s $SUBNET -o $TUN -j MASQUERADE"
+echo "Setting up NAT rule $IPTABLE_RULE"
+ip netns exec $NETNS iptables -t nat -C $IPTABLE_RULE 2>/dev/null|| ip netns exec $NETNS iptables -t nat -A $IPTABLE_RULE
